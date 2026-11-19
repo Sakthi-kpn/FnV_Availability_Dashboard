@@ -80,7 +80,7 @@ input{width:180px}
 .st .big span{font-size:18px;color:var(--ink-2)}
 .st .cmp{white-space:nowrap;font-size:11.5px;color:var(--ink-2);margin-top:4px}
 .tag{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
-.cats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
+.cats{display:grid;grid-template-columns:repeat(auto-fit,minmax(70px,1fr));gap:8px;margin-top:12px}
 .cats div{font-size:10.5px;color:var(--ink-3)}
 .cats b{display:block;font:600 13px var(--sans);color:var(--ink);margin:2px 0 4px;font-variant-numeric:tabular-nums}
 .cats .bar{height:4px;background:rgba(240,239,236,.07);border-radius:2px;overflow:hidden}
@@ -226,7 +226,11 @@ body.ready .wrap{opacity:1;transform:none}
 let D=null;
 let S='y', VIEW='cards';
 const $=s=>document.querySelector(s);
-const CC={Vegetables:'var(--veg)',Fruits:'var(--fru)',Greens:'var(--grn)',Morning:'var(--mor)',Evening:'var(--eve)'};
+const CC0={Vegetables:'var(--veg)',Fruits:'var(--fru)',Greens:'var(--grn)',Morning:'var(--mor)',Evening:'var(--eve)'};
+const CC=new Proxy(CC0,{get:(o,k)=>o[k]||'var(--ink-3)'});
+const CATS=()=>['Vegetables','Fruits','Greens'].filter(k=>D.cat.some(c=>c.k===k)).concat(D.cat.map(c=>c.k).filter(k=>!['Vegetables','Fruits','Greens'].includes(k)));
+const catSeries=src=>CATS().filter(k=>src[k]).map(k=>({name:k,color:CC[k],vals:src[k]}));
+const catLegend=()=>LG('var(--gold-2)','Overall')+CATS().map(k=>LG(CC[k],k)).join('');
 const st=v=>v>=85?['good','On track','✓']:v>=75?['warn','Watch','!']:['crit','Critical','✕'];
 const f1=v=>(+v).toFixed(1);
 const dl=(v,suf='')=>{v=+v;const c=v>0?'up':v<0?'dn':'';return `<span class="${c}">${v>0?'▲ +':v<0?'▼ ':''}${f1(v)}${suf}</span>`};
@@ -279,7 +283,7 @@ function buildInsights(){
   const sd=[...D.stores].sort((a,b)=>b.delta-a.delta),up=sd[0],dn=sd.filter(s=>s.delta<0).slice(-2).reverse();
   O.push(`<b>Biggest swings vs own MTD:</b> ${up.name} <span class="up">${sg(up.delta)}</span> (${up.y.avail}% vs ${up.m.avail}%).${dn.length?` ${dn.map(s=>`${s.name} <span class="dn">${sg(s.delta)}</span>`).join(' and ')} slipped.`:' No store fell below its MTD run-rate.'}`);
   const cl=Object.entries(D.stores.reduce((a,s)=>(a[s.cls]=(a[s.cls]||0)+1,a),{})).sort().map(([k,v])=>`${k}: ${v}`).join(' · ');
-  O.push(`<b>Scope:</b> online stores only (${D.stores_n}; class ${cl}).${D.missing_stores.length?` ${D.missing_stores.length} listed stores (${D.missing_stores.join(', ')}) are offline and not shown.`:''} ${D.notinraw.length} assortment SKUs are not tracked.`);
+  O.push(`<b>Scope:</b> online stores only (${D.stores_n}; class ${cl}).${D.missing_stores.length?` ${D.missing_stores.length} listed stores (${D.missing_stores.join(', ')}) are offline and not shown.`:''} ${D.notinraw.length} assortment SKUs are not tracked.${D.unmapped&&D.unmapped.length?` ${D.unmapped.length} SKUs in the feed are not on the Assortment sheet (${D.unmapped.slice(0,3).join(', ')}…), counted under their raw category.`:''}`);
   $('#ins').innerHTML=O.map(x=>`<li>${x}</li>`).join('');
 }
 
@@ -309,22 +313,22 @@ function renderTrend(){
   if(S==='y'){
     $('#trlabel').textContent=`YESTERDAY · ${D.dshort.toUpperCase()} · HOURLY`;
     $('#ct1').textContent=`Hourly availability · ${D.dshort} · 7 AM – 8 PM`;$('#cs1').textContent='Overall vs category';
-    const s1=[{name:'Vegetables',color:'var(--veg)',vals:D.hour_cat_y.Vegetables},{name:'Fruits',color:'var(--fru)',vals:D.hour_cat_y.Fruits},{name:'Greens',color:'var(--grn)',vals:D.hour_cat_y.Greens},{name:'Overall',color:'var(--gold-2)',vals:D.hour_y,w:3,end:1}];
-    $('#lg1').innerHTML=LG('var(--gold-2)','Overall')+LG('var(--veg)','Vegetables')+LG('var(--fru)','Fruits')+LG('var(--grn)','Greens');
+    const s1=[...catSeries(D.hour_cat_y),{name:'Overall',color:'var(--gold-2)',vals:D.hour_y,w:3,end:1}];
+    $('#lg1').innerHTML=catLegend();
     lineChart($('#trend'),HRS,HRL,s1,axis(s1),100);
     $('#ct2').textContent=`Hourly availability · ${D.dshort} · by delivery slot`;$('#cs2').textContent='Morning vs evening drop';
-    const s2=[{name:'Morning drop',color:'var(--mor)',vals:D.hour_dlv_y.Morning,w:3},{name:'Evening drop',color:'var(--eve)',vals:D.hour_dlv_y.Evening,w:3}];
+    const s2=['Morning','Evening'].filter(k=>D.hour_dlv_y[k]).map(k=>({name:k+' drop',color:CC[k],vals:D.hour_dlv_y[k],w:3}));
     $('#lg2').innerHTML=LG('var(--mor)','Morning drop')+LG('var(--eve)','Evening drop');
     lineChart($('#hour'),HRS,HRL,s2,axis(s2),100);
   } else {
     $('#trlabel').textContent=`MTD · ${days[0]}–${days[days.length-1]} ${D.mon.toUpperCase()}`;
     $('#ct1').textContent=`Daily availability · ${days[0]}–${days[days.length-1]} ${D.mon}`;$('#cs1').textContent='Overall vs category';
-    const s1=[{name:'Vegetables',color:'var(--veg)',vals:D.trend.map(t=>t.Vegetables)},{name:'Fruits',color:'var(--fru)',vals:D.trend.map(t=>t.Fruits)},{name:'Greens',color:'var(--grn)',vals:D.trend.map(t=>t.Greens)},{name:'Overall',color:'var(--gold-2)',vals:D.trend.map(t=>t.v),w:3,end:1}];
-    $('#lg1').innerHTML=LG('var(--gold-2)','Overall')+LG('var(--veg)','Vegetables')+LG('var(--fru)','Fruits')+LG('var(--grn)','Greens');
+    const tc=Object.fromEntries(CATS().map(k=>[k,D.trend.map(t=>t[k]??null)]).filter(([,v])=>v.every(x=>x!=null)));const s1=[...catSeries(tc),{name:'Overall',color:'var(--gold-2)',vals:D.trend.map(t=>t.v),w:3,end:1}];
+    $('#lg1').innerHTML=catLegend();
     lineChart($('#trend'),days,days.map(d=>d+' '+D.mon),s1,axis(s1),100);
     $('#ct2').textContent='Hourly availability · MTD average · 7 AM – 8 PM';$('#cs2').textContent='Overall vs category, by hour';
-    const s2=[{name:'Vegetables',color:'var(--veg)',vals:D.hour_cat_m.Vegetables},{name:'Fruits',color:'var(--fru)',vals:D.hour_cat_m.Fruits},{name:'Greens',color:'var(--grn)',vals:D.hour_cat_m.Greens},{name:'Overall',color:'var(--gold-2)',vals:D.hour_m,w:3}];
-    $('#lg2').innerHTML=LG('var(--gold-2)','Overall')+LG('var(--veg)','Vegetables')+LG('var(--fru)','Fruits')+LG('var(--grn)','Greens');
+    const s2=[...catSeries(D.hour_cat_m),{name:'Overall',color:'var(--gold-2)',vals:D.hour_m,w:3}];
+    $('#lg2').innerHTML=catLegend();
     lineChart($('#hour'),HRS,HRL,s2,axis(s2),100);
   }
 }
@@ -385,14 +389,14 @@ function renderStores(){
     $('#stores').innerHTML=`<div class="sc">`+L.map(s=>{const v=s[S].avail,o=S==='y'?s.m.avail:s.y.avail,[c,lab,ic]=st(v);const rk=S==='y'?s.ry:s.rm;const CS=S==='y'?s.caty:s.catm;
       return `<div class="card st"><div class="top"><div><div class="rk">#${rk} of ${D.stores_n}</div><h3>${s.name}</h3><div class="meta">Class ${s.cls} · ${s.com}</div></div><span class="pill ${c}">${ic} ${lab}</span></div>
       <div class="mid"><div><div class="big">${f1(v)}<span>%</span></div><div class="cmp">${S==='y'?'MTD':'Yday'} ${f1(o)}% · Δ ${dl(s.delta)}</div></div><div style="text-align:right">${spark(s)}<div class="tag">${s.tag}</div></div></div>
-      <div class="cats">${['Vegetables','Fruits','Greens'].map(k=>`<div>${k}<b>${f1(CS[k])}%</b><div class="bar"><i style="width:${CS[k]}%;background:${CC[k]}"></i></div></div>`).join('')}</div>
+      <div class="cats">${CATS().map(k=>`<div>${k}<b>${CS[k]==null?'–':f1(CS[k])+'%'}</b><div class="bar"><i style="width:${CS[k]}%;background:${CC[k]}"></i></div></div>`).join('')}</div>
       <ul>${s.ins.map(t=>`<li>${t}</li>`).join('')}</ul></div>`}).join('')+`</div>`;
   } else {
-    const cols=[['name','Store'],['cls','Class'],['com','COM'],['y','Yday %','r'],['m','MTD %','r'],['delta','Δ','r'],['last7','Last 7d %','r'],['V','Veg %','r'],['F','Fruit %','r'],['G','Greens %','r'],['oos','Blank SKUs (Yday)','r']];
-    const CT=S==='y'?'caty':'catm';const val=(s,k)=>({y:s.y.avail,m:s.m.avail,V:s[CT].Vegetables,F:s[CT].Fruits,G:s[CT].Greens,oos:s.y.oos0}[k]??s[k]);
+    const cols=[['name','Store'],['cls','Class'],['com','COM'],['y','Yday %','r'],['m','MTD %','r'],['delta','Δ','r'],['last7','Last 7d %','r'],...CATS().map(k=>['c_'+k,k+' %','r']),['oos','Blank SKUs (Yday)','r']];
+    const CT=S==='y'?'caty':'catm';const val=(s,k)=>({y:s.y.avail,m:s.m.avail,oos:s.y.oos0}[k]??(k.startsWith('c_')?(s[CT][k.slice(2)]??-1):s[k]));
     L.sort((a,b)=>{const x=val(a,tSort.k==='avail'?S:tSort.k),y=val(b,tSort.k==='avail'?S:tSort.k);return (x>y?1:x<y?-1:0)*tSort.d});
     $('#stores').innerHTML=`<div class="card" style="overflow-x:auto"><table class="tb"><thead><tr>${cols.map(c=>`<th class="${c[2]||''}" data-k="${c[0]}">${c[1]}</th>`).join('')}</tr></thead><tbody>`+
-      L.map(s=>{const [c,lab,ic]=st(s[S].avail);return `<tr><td><span class="pill ${c}" style="margin-right:8px">${ic}</span>${s.name}</td><td>${s.cls}</td><td>${s.com}</td><td class="r">${f1(s.y.avail)}</td><td class="r">${f1(s.m.avail)}</td><td class="r">${dl(s.delta)}</td><td class="r">${f1(s.last7)}</td><td class="r">${f1(s[CT].Vegetables)}</td><td class="r">${f1(s[CT].Fruits)}</td><td class="r">${f1(s[CT].Greens)}</td><td class="r">${s.y.oos0}</td></tr>`}).join('')+`</tbody></table></div>`;
+      L.map(s=>{const [c,lab,ic]=st(s[S].avail);return `<tr><td><span class="pill ${c}" style="margin-right:8px">${ic}</span>${s.name}</td><td>${s.cls}</td><td>${s.com}</td><td class="r">${f1(s.y.avail)}</td><td class="r">${f1(s.m.avail)}</td><td class="r">${dl(s.delta)}</td><td class="r">${f1(s.last7)}</td>${CATS().map(k=>`<td class="r">${s[CT][k]==null?'–':f1(s[CT][k])}</td>`).join('')}<td class="r">${s.y.oos0}</td></tr>`}).join('')+`</tbody></table></div>`;
     document.querySelectorAll('.tb th').forEach(th=>th.onclick=()=>{const k=th.dataset.k;tSort={k,d:tSort.k===k?-tSort.d:1};renderStores()});
   }
 }

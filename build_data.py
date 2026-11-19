@@ -44,8 +44,11 @@ Y = r.dt.max()
 r = r[(r.dt.dt.year == Y.year) & (r.dt.dt.month == Y.month)]      # MTD = month of latest date
 
 m = r.merge(s.rename(columns={'Outlet Id': 'outlet_id', 'Store Name': 'store', 'Class': 'cls'}), on='outlet_id').merge(
-    a[['KSIN', 'Delivery Type']].rename(columns={'KSIN': 'ksin', 'Delivery Type': 'dlv'}), on='ksin', how='left')
-m['dlv'] = m['dlv'].fillna('Unmapped')
+    a[['KSIN', 'Delivery Type', 'Category']].rename(columns={'KSIN': 'ksin', 'Delivery Type': 'dlv', 'Category': 'acat'}), on='ksin', how='left')
+# Category: Assortment sheet is the master (Raw data may label greens as Vegetables)
+m['l1_name'] = m['acat'].astype(str).str.strip().where(m['acat'].notna(), m['l1_name'].astype(str).str.strip())
+m['dlv'] = m['dlv'].astype(str).str.strip().where(m['dlv'].notna(), 'Not in assortment')
+D_unmapped = sorted(m.loc[m.acat.isna(), 'kpn_title'].unique().tolist())
 H = [f'h{i:02d}' for i in range(7, 21)]
 m['oos0'] = m.total_sku_hours == 0; m['full'] = m.total_sku_hours == m.total_store_hrs
 yd = m[m.dt == Y]
@@ -93,6 +96,7 @@ D['dead'] = [z['n'] for z in sk if z['ma'] == 0]
 nd = m[~m.kpn_title.isin(D['dead'])]
 D['exdead_y'] = av(nd[nd.dt == Y]) if len(nd[nd.dt == Y]) else None; D['exdead_m'] = av(nd)
 D['notinraw'] = a[~a.KSIN.isin(r.ksin)].Product.str.strip().tolist()
+D['unmapped'] = D_unmapped
 D['missing_stores'] = s[~s['Outlet Id'].isin(r.outlet_id)]['Store Name'].tolist()
 
 # stores
