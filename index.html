@@ -217,6 +217,9 @@ body.ready .wrap{opacity:1;transform:none}
     <div class="card"><div class="ct">Zero all month</div><div class="cs"><span id="deadl">Dead SKUs · 0% every day this month</span></div><div id="dead"></div>
       <div class="note" id="gaps"></div></div>
   </div>
+  <div class="card" id="naCard" style="margin-top:14px"><div class="ct" id="nat"></div><div class="cs">SKUs not in assortment</div>
+    <div class="note" style="margin:-4px 0 10px">In the availability feed but missing from the Assortment sheet. Counted under their raw category; add them to the Assortment sheet to map delivery slot and class.</div>
+    <div id="na"></div></div>
 </section>
 
 <footer><span>Availability = SKU-hours on shelf ÷ store hours (14 h, 7 AM–8 PM), weighted across all tracked store-SKU lines.</span><span id="foot"></span></footer>
@@ -273,6 +276,11 @@ function buildInsights(){
   O.push(`<b>Most whole-day misses: ${ob.k}</b> — ${ob.y.oos0p}% of lines blank all day (${oth}). Check supply on imported and exotic lines.`);
   const hy=D.hour_y,hm=D.hour_m,mo=dv.Morning,ev=dv.Evening;
   O.push(`<b>Shelves bleed through the day</b>: ${hy[1]}% at 8 AM falls to ${hy[13]}% at 8 PM yesterday (MTD ${hm[1]}% → ${hm[13]}%).${mo&&ev?` Morning-delivery SKUs sit at <b>${mo.y.avail}%</b> vs evening ${ev.y.avail}%, which points to ${mo.y.avail<ev.y.avail?'an afternoon refill gap':'weaker evening drops'}.`:''}`);
+  const NA=D.skus.filter(s=>s.dl==='Not in assortment').sort((a,b)=>(S==='y'?(a.ya??101)-(b.ya??101):a.ma-b.ma));
+  $('#nat').textContent=`${NA.length} SKU${NA.length===1?'':'s'} · ${S==='y'?'Yesterday':'MTD'}`;
+  $('#naCard').style.display=NA.length?'':'none';
+  $('#na').innerHTML=`<table class="tb"><thead><tr><th>SKU</th><th>Category</th><th class="r">Stores listed</th><th class="r">Avail %</th><th class="r">${S==='y'?'Stores blank':'Store-days blank'}</th></tr></thead><tbody>`+
+   NA.map(s=>`<tr><td><span class="dot" style="background:${CC[s.c]}"></span>${s.n}</td><td>${s.c}</td><td class="r">${s.ys}</td><td class="r">${S==='y'?(s.ya==null?'–':f1(s.ya)):f1(s.ma)}</td><td class="r">${S==='y'?`${s.yo} / ${s.ys}`:`${s.mo} / ${s.mr}`}</td></tr>`).join('')+`</tbody></table>`;
   const dd=D.skus.filter(s=>D.dead.includes(s.n)).sort((a,b)=>b.mr-a.mr);
   O.push(dd.length?`<b>${dd.length} SKUs scored 0% on every day</b> this month (${dd[0].n} alone in ${dd[0].ys} stores). Delisting or fixing them lifts yesterday to ${D.exdead_y}% and MTD to ${D.exdead_m}%.`:`<b>No SKU was dark for the whole month.</b> Zero-availability SKUs are intermittent, so look at the watchlist below.`);
   const sf=D.skus.filter(s=>!D.dead.includes(s.n)&&s.ys>=5&&s.yo/s.ys>=.4).sort((a,b)=>b.yo/b.ys-a.yo/a.ys).slice(0,3);
@@ -387,7 +395,7 @@ function renderStores(){
   L.sort(sk);
   if(VIEW==='cards'){
     $('#stores').innerHTML=`<div class="sc">`+L.map(s=>{const v=s[S].avail,o=S==='y'?s.m.avail:s.y.avail,[c,lab,ic]=st(v);const rk=S==='y'?s.ry:s.rm;const CS=S==='y'?s.caty:s.catm;
-      return `<div class="card st"><div class="top"><div><div class="rk">#${rk} of ${D.stores_n}</div><h3>${s.name}</h3><div class="meta">Class ${s.cls} · ${s.com}</div></div><span class="pill ${c}">${ic} ${lab}</span></div>
+      return `<div class="card st"><div class="top"><div><div class="rk">#${rk} of ${D.stores_n}</div><h3>${s.name}</h3><div class="meta" title="SKUs tracked yesterday">Class ${s.cls} · ${s.y.rows} · ${s.com}</div></div><span class="pill ${c}">${ic} ${lab}</span></div>
       <div class="mid"><div><div class="big">${f1(v)}<span>%</span></div><div class="cmp">${S==='y'?'MTD':'Yday'} ${f1(o)}% · Δ ${dl(s.delta)}</div></div><div style="text-align:right">${spark(s)}<div class="tag">${s.tag}</div></div></div>
       <div class="cats">${CATS().map(k=>`<div>${k}<b>${CS[k]==null?'–':f1(CS[k])+'%'}</b><div class="bar"><i style="width:${CS[k]}%;background:${CC[k]}"></i></div></div>`).join('')}</div>
       <ul>${s.ins.map(t=>`<li>${t}</li>`).join('')}</ul></div>`}).join('')+`</div>`;
@@ -413,6 +421,11 @@ function renderSku(){
   const L=D.skus.filter(s=>!D.dead.includes(s.n)&&(S==='y'?s.ys>0:true)).sort((a,b)=>S==='y'?(b.yo/b.ys-a.yo/a.ys)||(b.yo-a.yo):(b.mo/b.mr-a.mo/a.mr)).slice(0,14);
   $('#skus').innerHTML=`<table class="tb"><thead><tr><th>SKU</th><th>Slot</th><th class="r">Avail %</th><th class="r">${S==='y'?'Stores blank':'Store-days blank'}</th></tr></thead><tbody>`+
    L.map(s=>`<tr><td><span class="dot" style="background:${CC[s.c]}"></span>${s.n}</td><td>${s.dl}</td><td class="r">${f1(S==='y'?s.ya:s.ma)}</td><td class="r">${S==='y'?`${s.yo} / ${s.ys}`:`${s.mo} / ${s.mr}`}</td></tr>`).join('')+`</tbody></table>`;
+  const NA=D.skus.filter(s=>s.dl==='Not in assortment').sort((a,b)=>(S==='y'?(a.ya??101)-(b.ya??101):a.ma-b.ma));
+  $('#nat').textContent=`${NA.length} SKU${NA.length===1?'':'s'} · ${S==='y'?'Yesterday':'MTD'}`;
+  $('#naCard').style.display=NA.length?'':'none';
+  $('#na').innerHTML=`<table class="tb"><thead><tr><th>SKU</th><th>Category</th><th class="r">Stores listed</th><th class="r">Avail %</th><th class="r">${S==='y'?'Stores blank':'Store-days blank'}</th></tr></thead><tbody>`+
+   NA.map(s=>`<tr><td><span class="dot" style="background:${CC[s.c]}"></span>${s.n}</td><td>${s.c}</td><td class="r">${s.ys}</td><td class="r">${S==='y'?(s.ya==null?'–':f1(s.ya)):f1(s.ma)}</td><td class="r">${S==='y'?`${s.yo} / ${s.ys}`:`${s.mo} / ${s.mr}`}</td></tr>`).join('')+`</tbody></table>`;
   const dd=D.skus.filter(s=>D.dead.includes(s.n)).sort((a,b)=>b.ys-a.ys);
   $('#dead').innerHTML=`<table class="tb"><thead><tr><th>SKU</th><th>Category</th><th class="r">Stores listed</th><th class="r">Store-days lost</th></tr></thead><tbody>`+
    dd.map(s=>`<tr><td><span class="dot" style="background:${CC[s.c]}"></span>${s.n}</td><td>${s.c}</td><td class="r">${s.ys}</td><td class="r">${s.mr}</td></tr>`).join('')+`</tbody></table>`;
