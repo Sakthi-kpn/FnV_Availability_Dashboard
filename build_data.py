@@ -2,7 +2,7 @@
 """Build data.json for the FnV Availability Dashboard.
 
 Usage:  python build_data.py [xlsx-file-or-folder] [out.json]
-Default: newest .xlsx in ./data  ->  ./data.json
+Default: every .xlsx/.csv in ./data (and subfolders) -> ./data.json
 "Newest" = last git commit time (falls back to file modified time).
 """
 import sys, os, glob, json, subprocess, datetime as dt
@@ -36,7 +36,8 @@ def fix_shifted(df):
     return df
 
 if os.path.isdir(src):
-    files = [f for f in glob.glob(os.path.join(src, '*.xls*')) if not os.path.basename(f).startswith('~$')]
+    files = [f for f in glob.glob(os.path.join(src, '**', '*.*'), recursive=True)
+             if f.lower().endswith(('.xlsx', '.xls', '.csv')) and not os.path.basename(f).startswith('~$')]
 else:
     files = [src]
 if not files: sys.exit('No .xlsx file found in ' + str(src))
@@ -45,7 +46,8 @@ files.sort(key=stamp)                        # oldest -> newest; newer rows win 
 raws, a, s = [], None, None
 for order, f in enumerate(files):
     print('Reading', os.path.basename(f))
-    for name, df in pd.read_excel(f, sheet_name=None).items():
+    sheets = {'csv': pd.read_csv(f)} if f.lower().endswith('.csv') else pd.read_excel(f, sheet_name=None)
+    for name, df in sheets.items():
         df.columns = [str(c).strip() for c in df.columns]
         low = {c.lower(): c for c in df.columns}
         if {'outlet_id', 'dt', 'ksin'} <= set(low):
