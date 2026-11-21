@@ -19,16 +19,55 @@ def stamp(f):
     except Exception: pass
     return (0, os.path.getmtime(f))
 
+RAW_COLS = ['outlet_id', 'dt', 'ksin', 'kpn_title', 'l1_name', 'total_sku_hours', 'total_store_hrs', 'avail_pct'] + [f'h{i:02d}' for i in range(7, 21)]
+NUM_COLS = RAW_COLS[5:]
+
+def fix_shifted(df):
+    """Rows pasted from an export with an extra column (l2_name) land one column to the right.
+    Detect them (text in total_sku_hours) and shift their numeric block back."""
+    cols = list(df.columns)
+    if 'total_sku_hours' not in cols: return df
+    bad = pd.to_numeric(df['total_sku_hours'], errors='coerce').isna() & df['total_sku_hours'].notna()
+    if bad.any():
+        i = cols.index('total_sku_hours')
+        tail = cols[i:]                      # total_sku_hours ... last column
+        df.loc[bad, tail[:-1]] = df.loc[bad, tail[1:]].values
+        print(f'  repaired {int(bad.sum())} shifted rows')
+    return df
+
 if os.path.isdir(src):
     files = [f for f in glob.glob(os.path.join(src, '*.xls*')) if not os.path.basename(f).startswith('~$')]
-    if not files: sys.exit('No .xlsx file found in ' + src)
-    src = max(files, key=stamp)
-print('Using', src)
+else:
+    files = [src]
+if not files: sys.exit('No .xlsx file found in ' + str(src))
+files.sort(key=stamp)                        # oldest -> newest; newer rows win on duplicates
 
-x = pd.ExcelFile(src)
-r = x.parse('Raw data'); a = x.parse('Assortment'); s = x.parse('Store class breakup')
-a.columns = a.columns.str.strip(); s.columns = s.columns.str.strip()
-s['Store Name'] = s['Store Name'].str.strip()
+raws, a, s = [], None, None
+for order, f in enumerate(files):
+    print('Reading', os.path.basename(f))
+    for name, df in pd.read_excel(f, sheet_name=None).items():
+        df.columns = [str(c).strip() for c in df.columns]
+        low = {c.lower(): c for c in df.columns}
+        if {'outlet_id', 'dt', 'ksin'} <= set(low):
+            df = fix_shifted(df.rename(columns={v: k for k, v in low.items()}))
+            miss = [c for c in RAW_COLS if c not in df.columns]
+            if miss: print(f'  skip sheet {name}: missing {miss}'); continue
+            df = df[RAW_COLS].copy(); df['_o'] = order; raws.append(df)
+        elif 'ksin' in low and ('category' in low or 'delivery type' in low):
+            a = df
+        elif 'outlet id' in low and 'class' in low:
+            s = df
+if not raws: sys.exit('No availability rows found (need outlet_id, dt, ksin columns)')
+if a is None or s is None: sys.exit('Assortment / Store class breakup sheet not found in any file in data/')
+r = pd.concat(raws, ignore_index=True)
+for c in NUM_COLS: r[c] = pd.to_numeric(r[c], errors='coerce').fillna(0)
+r['dt'] = pd.to_datetime(r['dt']).dt.normalize()
+# each date comes from the newest file that contains it; then drop exact duplicates
+r = r[r['_o'] == r.groupby('dt')['_o'].transform('max')]
+r = r.drop_duplicates(['outlet_id', 'dt', 'ksin'], keep='last').drop(columns='_o')
+src = files[-1]
+print('Rows', len(r), '| dates', r.dt.min().date(), '->', r.dt.max().date())
+s['Store Name'] = s['Store Name'].astype(str).str.strip()
 
 # cluster managers: config/cluster_managers.csv (Store ID,Manager) overrides the Excel sheet
 cm_path = os.path.join(HERE, 'config', 'cluster_managers.csv')
@@ -39,7 +78,6 @@ if os.path.exists(cm_path):
             k, v = l.strip().split(',', 1); cm[k.strip()] = v.strip()
 s['COM'] = s['Outlet Id'].map(cm).fillna(s['COM'].astype(str).str.strip())
 
-r['dt'] = pd.to_datetime(r['dt'])
 Y = r.dt.max()
 r = r[(r.dt.dt.year == Y.year) & (r.dt.dt.month == Y.month)]      # MTD = month of latest date
 
@@ -64,7 +102,7 @@ hr = lambda d: [round(float(d[h].mean()), 1) for h in H]
 
 D = {}
 D['generated_at'] = dt.datetime.now(dt.timezone.utc).isoformat(timespec='seconds')
-D['source'] = os.path.basename(src)
+D['source'] = os.path.basename(src) if len(files) == 1 else f'{len(files)} files in data/ (latest: {os.path.basename(src)})'
 D['date'] = Y.strftime('%d %b %Y'); D['dshort'] = Y.strftime('%d %b'); D['mon'] = Y.strftime('%b')
 D['ov'] = dict(y=kpi(yd), m=kpi(m))
 D['stores_n'] = int(m.outlet_id.nunique()); D['sku_n'] = int(m.ksin.nunique())
