@@ -1,28 +1,33 @@
 name: Build and publish dashboard
 
-# Every push to main rebuilds data.json from the Excel files in data/ and publishes the site.
-# Nothing is committed back, so your local copy never needs Fetch/Pull.
+# - push: rebuild whenever you change files
+# - schedule: every 30 min from 7:30 AM to midnight IST, pick up the published "Extract 1"
+#   sheet; when it has a new day, save it under data/daily/ and republish (late refreshes are never missed)
 on:
   push:
     branches: [main]
+  schedule:
+    - cron: '0,30 2-18 * * *'
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.decide.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0          # commit times decide which file is newest
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -31,22 +36,46 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - name: Build data.json from all Excel files in data/
-        run: python build_data.py data _site_data.json
+      - name: Fetch Extract 1 from Google Sheets
+        id: sheet
+        run: python fetch_sheet.py
 
-      - name: Assemble site
+      - name: Save new day to the repo
+        if: steps.sheet.outputs.new == 'true'
         run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/daily
+          git commit -m "Daily FnV data from Extract 1"
+          git pull --rebase origin main
+          git push
+
+      - name: Decide whether to publish
+        id: decide
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ] || [ "${{ steps.sheet.outputs.new }}" = "true" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build data.json
+        if: steps.decide.outputs.publish == 'true'
+        run: |
+          python build_data.py data _site_data.json
           mkdir -p _site
           cp index.html _site/
           cp _site_data.json _site/data.json
           touch _site/.nojekyll
 
       - uses: actions/upload-pages-artifact@v3
+        if: steps.decide.outputs.publish == 'true'
         with:
           path: _site
 
   deploy:
     needs: build
+    if: needs.build.outputs.publish == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
