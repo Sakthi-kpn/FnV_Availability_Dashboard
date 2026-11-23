@@ -1,42 +1,85 @@
-#!/usr/bin/env python3
-"""Download the published 'Extract 1' CSV (Google Sheets -> File -> Share -> Publish to web)
-and save it as data/daily/FnV_YYYY-MM-DD.csv when it holds a day we don't have yet.
-Writes new=true/false to $GITHUB_OUTPUT."""
-import os, sys, io, urllib.request
-import pandas as pd
+name: Build and publish dashboard
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-cfg = os.path.join(HERE, 'config', 'sheet_csv_url.txt')
-out_flag = os.environ.get('GITHUB_OUTPUT')
+# - push: rebuild whenever you change files
+# - schedule: every 30 min from 7:30 AM to midnight IST, pick up the published "Extract 1"
+#   sheet; when it has a new day, save it under data/daily/ and republish (late refreshes are never missed)
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0,30 2-18 * * *'
+  workflow_dispatch:
 
-def flag(v):
-    if out_flag:
-        with open(out_flag, 'a') as f: f.write(f'new={v}\n')
+permissions:
+  contents: write
+  pages: write
+  id-token: write
 
-if not os.path.exists(cfg) or not open(cfg).read().strip():
-    print('No config/sheet_csv_url.txt - skipping sheet fetch'); flag('false'); sys.exit(0)
-url = open(cfg).read().strip().split()[0]
+concurrency:
+  group: pages
+  cancel-in-progress: false
 
-req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-raw = urllib.request.urlopen(req, timeout=60).read().decode('utf-8-sig')
-df = pd.read_csv(io.StringIO(raw))
-df.columns = [str(c).strip() for c in df.columns]
-need = ['outlet_id', 'dt', 'ksin', 'total_sku_hours', 'total_store_hrs']
-if any(c not in df.columns for c in need) or df.empty:
-    print('Published sheet does not look like Extract 1:', df.columns.tolist()[:10]); flag('false'); sys.exit(0)
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.decide.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-df = df[df['outlet_id'].astype(str).str.strip() != '']
-df['dt'] = pd.to_datetime(df['dt'], errors='coerce').dt.strftime('%Y-%m-%d')
-df = df.dropna(subset=['dt'])
-os.makedirs(os.path.join(HERE, 'data', 'daily'), exist_ok=True)
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
 
-# The sheet may hold one day or several (e.g. last 3 days). Save every day we don't have yet,
-# or that now has more rows than before, so a missed refresh day is recovered later.
-saved = []
-for day, part in sorted(df.groupby('dt')):
-    path = os.path.join(HERE, 'data', 'daily', f'FnV_{day}.csv')
-    if os.path.exists(path) and len(pd.read_csv(path)) >= len(part):
-        print(f'{day} already saved ({len(part)} rows)'); continue
-    part.to_csv(path, index=False); saved.append(day)
-    print(f'Saved {path} ({len(part)} rows)')
-flag('true' if saved else 'false')
+      - run: pip install -r requirements.txt
+
+      - name: Fetch Extract 1 from Google Sheets
+        id: sheet
+        run: python fetch_sheet.py
+
+      - name: Save new day to the repo
+        if: steps.sheet.outputs.new == 'true'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/daily
+          git commit -m "Daily FnV data from Extract 1"
+          git pull --rebase origin main
+          git push
+
+      - name: Decide whether to publish
+        id: decide
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ] || [ "${{ steps.sheet.outputs.new }}" = "true" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build data.json
+        if: steps.decide.outputs.publish == 'true'
+        run: |
+          python build_data.py data _site_data.json
+          mkdir -p _site
+          cp index.html _site/
+          cp _site_data.json _site/data.json
+          touch _site/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.decide.outputs.publish == 'true'
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
